@@ -11,7 +11,7 @@ from typing import Union
 
 import torch
 import torch.nn as nn
-from torchdiffeq import odeint
+from torchdiffeq import odeint_adjoint
 
 
 class TorqueInterpolatorConstant:
@@ -141,7 +141,7 @@ class NeuralODE(nn.Module):
         self.ode_func.set_interpolator(TorqueInterpolatorConstant(torques, self.dt))
         
         # Batched integration: returns [seq_len+1, batch, state_dim]
-        states = odeint(self.ode_func, initial_state, t_span, method='rk4')
+        states = odeint_adjoint(self.ode_func, initial_state, t_span, method='euler')
         
         # Permute to [batch, seq_len+1, state_dim] and exclude t=0
         return states[1:].permute(1, 0, 2)

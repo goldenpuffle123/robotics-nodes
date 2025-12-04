@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 from tqdm import tqdm
 
 from neural_ode_robot import NeuralODE
@@ -121,7 +121,13 @@ def train(
     device=None,
     resume=None,
 ):
-    device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+    if device is None:
+        if torch.cuda.is_available():
+            device = 'cuda'
+        elif torch.backends.mps.is_available():
+            device = 'mps'
+        else:
+            device = 'cpu'
     print(f"Device: {device}")
     
     torch.manual_seed(seed)
@@ -146,7 +152,8 @@ def train(
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr * 0.01)
+    #scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr * 0.01)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6)
     
     # Resume from checkpoint if specified
     start_epoch = 1
@@ -165,7 +172,7 @@ def train(
     for epoch in range(start_epoch, epochs + 1):
         train_m = train_epoch(model, train_loader, optimizer, device, epoch, grad_clip)
         val_m = validate(model, val_loader, device)
-        scheduler.step()
+        scheduler.step(val_m['loss'])
         
         history['train'].append(train_m)
         history['val'].append(val_m)
