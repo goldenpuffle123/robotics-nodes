@@ -1,1 +1,7 @@
 .venv
+checkpoints/
+**/__pycache__/
+*.md
+!README.md
+model/
+modelv2/
