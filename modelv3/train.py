@@ -144,7 +144,7 @@ def train(
     with open(output_dir / 'config.json', 'w') as f:
         json.dump(config, f, indent=2)
     
-    train_loader, val_loader, state_norm, torque_norm = create_dataloaders(
+    train_loader, val_loader, test_loader, state_norm, torque_norm = create_dataloaders(
         data_dir, batch_size, seq_len, stride, seed=seed
     )
     

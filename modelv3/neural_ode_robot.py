@@ -1,17 +1,58 @@
-"""
-Neural ODE model for robot dynamics prediction.
-Key changes from v2:
-1. Linear torque interpolation (differentiable)
-2. Per-trajectory integration (no batched ODE)
-3. Predicts delta state (not acceleration)
-4. Uses odeint (not adjoint)
-"""
-
-from typing import Union
+from typing import Union, Callable
 
 import torch
 import torch.nn as nn
-from torchdiffeq import odeint_adjoint
+from torchdiffeq import odeint, odeint_adjoint
+
+
+def velocity_verlet(func: Callable, y0: torch.Tensor, t: torch.Tensor, **kwargs) -> torch.Tensor:
+    device = y0.device
+    dtype = y0.dtype
+    batch_size = y0.shape[0]
+    state_dim = y0.shape[1]
+    dof = state_dim // 2
+    
+    num_steps = len(t)
+    states = torch.zeros(num_steps, batch_size, state_dim, device=device, dtype=dtype)
+    
+    # Initial state
+    y = y0.clone()
+    states[0] = y
+    
+    # Extract initial position and velocity
+    q = y[:, :dof]  # positions (angles)
+    v = y[:, dof:]  # velocities
+    
+    # Initial acceleration: predicted using ODE function
+    dy = func(t[0], y)
+    a = dy[:, dof:]  # acceleration part
+    
+    for i in range(1, num_steps):
+        dt = t[i] - t[i-1]
+        
+        # Step 1: Update position using current velocity and acceleration
+        # q_{n+1} = q_n + v_n * dt + 0.5 * a_n * dt^2
+        q_new = q + v * dt + 0.5 * a * dt * dt
+        
+        # Step 2: Compute new acceleration at predicted state
+        # Use predictor velocity: v_pred = v_n + a_n * dt
+        v_pred = v + a * dt
+        y_pred = torch.cat([q_new, v_pred], dim=-1)
+        dy_new = func(t[i], y_pred)
+        a_new = dy_new[:, dof:]
+        
+        # Step 3: Update velocity using average acceleration
+        # v_{n+1} = v_n + 0.5 * (a_n + a_{n+1}) * dt
+        v_new = v + 0.5 * (a + a_new) * dt
+        
+        # Store new state
+        q = q_new
+        v = v_new
+        a = a_new
+        y = torch.cat([q, v], dim=-1)
+        states[i] = y
+    
+    return states
 
 
 class TorqueInterpolatorConstant:
@@ -141,7 +182,8 @@ class NeuralODE(nn.Module):
         self.ode_func.set_interpolator(TorqueInterpolatorConstant(torques, self.dt))
         
         # Batched integration: returns [seq_len+1, batch, state_dim]
-        states = odeint_adjoint(self.ode_func, initial_state, t_span, method='euler')
+        # states = odeint_adjoint(self.ode_func, initial_state, t_span, method='rk4')
+        states = velocity_verlet(self.ode_func, initial_state, t_span)
         
         # Permute to [batch, seq_len+1, state_dim] and exclude t=0
         return states[1:].permute(1, 0, 2)

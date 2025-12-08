@@ -77,10 +77,15 @@ def create_dataloaders(
     seq_len: int = 100,
     stride: int = 10,
     train_split: float = 0.7,
+    val_split: float = 0.2,
     num_workers: int = 4,
     seed: int = 42,
-) -> Tuple[DataLoader, DataLoader, Normalizer, Normalizer]:
-    """Create train and validation dataloaders."""
+) -> Tuple[DataLoader, DataLoader, DataLoader, Normalizer, Normalizer]:
+    """Create train, validation, and test dataloaders.
+    
+    Split ratios: train_split for training, val_split for validation, 
+    remainder (1 - train_split - val_split) for testing.
+    """
     
     files = sorted(glob.glob(os.path.join(data_dir, "left_*.csv")))
     print(f"Loading {len(files)} files")
@@ -111,18 +116,25 @@ def create_dataloaders(
         for idx in range(boundaries[i], boundaries[i + 1] - seq_len, stride):
             indices.append(idx)
     
-    # Shuffle and split
+    # Shuffle and split into train/val/test
     np.random.seed(seed)
     np.random.shuffle(indices)
     n_train = int(len(indices) * train_split)
+    n_val = int(len(indices) * val_split)
     
-    print(f"Total: {len(indices)}, Train: {n_train}, Val: {len(indices) - n_train}")
+    train_indices = indices[:n_train]
+    val_indices = indices[n_train:n_train + n_val]
+    test_indices = indices[n_train + n_val:]
+    
+    print(f"Total: {len(indices)}, Train: {len(train_indices)}, Val: {len(val_indices)}, Test: {len(test_indices)}")
     
     # Use raw states (all_states), normalized torques (torques_n)
-    train_ds = TrajectoryDataset(all_states, torques_n, indices[:n_train], seq_len)
-    val_ds = TrajectoryDataset(all_states, torques_n, indices[n_train:], seq_len)
+    train_ds = TrajectoryDataset(all_states, torques_n, train_indices, seq_len)
+    val_ds = TrajectoryDataset(all_states, torques_n, val_indices, seq_len)
+    test_ds = TrajectoryDataset(all_states, torques_n, test_indices, seq_len)
     
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
     
-    return train_loader, val_loader, state_norm, torque_norm
+    return train_loader, val_loader, test_loader, state_norm, torque_norm
