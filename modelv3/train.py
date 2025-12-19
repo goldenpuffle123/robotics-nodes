@@ -120,6 +120,7 @@ def train(
     seed=42,
     device=None,
     resume=None,
+    integrator='euler',
 ):
     if device is None:
         if torch.cuda.is_available():
@@ -138,7 +139,7 @@ def train(
     
     config = dict(
         hidden_dim=hidden_dim, dt=dt, seq_len=seq_len, batch_size=batch_size,
-        lr=lr, weight_decay=weight_decay, epochs=epochs,
+        lr=lr, weight_decay=weight_decay, epochs=epochs, integrator=integrator,
     )
     
     with open(output_dir / 'config.json', 'w') as f:
@@ -148,8 +149,9 @@ def train(
         data_dir, batch_size, seq_len, stride, seed=seed
     )
     
-    model = NeuralODE(dof=7, hidden_dim=hidden_dim, dt=dt).to(device)
+    model = NeuralODE(dof=7, hidden_dim=hidden_dim, dt=dt, integrator=integrator).to(device)
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"Integrator: {integrator}")
     
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     #scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr * 0.01)
@@ -209,6 +211,10 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--device', default=None)
     parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume from')
+    parser.add_argument('--integrator', type=str, default='euler', 
+                        choices=['euler', 'rk4', 'dopri5', 'vv'],
+                        help='ODE solver method')
+
     args = parser.parse_args()
     
     train(**vars(args))

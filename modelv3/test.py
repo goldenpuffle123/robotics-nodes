@@ -11,10 +11,11 @@ import argparse
 
 from neural_ode_robot import NeuralODE
 from data import create_dataloaders, Normalizer
-from vis.fk import calculate_fk
+from fk import calculate_fk
 
 
-def load_model(path, device='cpu'):
+
+def load_model(path, device='cpu'): # Load model from config in checkpoint
     ckpt = torch.load(path, map_location=device, weights_only=False)
     config = ckpt.get('config', {})
     
@@ -22,6 +23,7 @@ def load_model(path, device='cpu'):
         dof=7,
         hidden_dim=config.get('hidden_dim', 128),
         dt=config.get('dt', 0.002),
+        integrator=config.get('integrator', 'euler'),
     )
     model.load_state_dict(ckpt['model_state_dict'])
     model.to(device)
@@ -31,17 +33,18 @@ def load_model(path, device='cpu'):
 
 
 def angles_to_ee(angles):
-    """Convert joint angles to EE positions."""
+    """Convert joint angles to end effector positions."""
     return np.array([calculate_fk(a)[:3, 3] for a in angles])
 
 
 def plot_ee_trajectories(pred_ang, gt_ang, title="EE Trajectory", save_path=None):
-    pred_ee = angles_to_ee(pred_ang)
-    gt_ee = angles_to_ee(gt_ang)
+    """Plot predicted vs ground truth end effector trajectories for one model."""
+    pred_ee = angles_to_ee(pred_ang) # Predicted (from model)
+    gt_ee = angles_to_ee(gt_ang) # Ground truth
     
     fig = plt.figure(figsize=(14, 5))
     
-    # 3D plot
+    # 3D plot of predicted vs ground truth
     ax1 = fig.add_subplot(131, projection='3d')
     ax1.plot(gt_ee[:, 0], gt_ee[:, 1], gt_ee[:, 2], 'b-', lw=2, label='Ground Truth')
     ax1.plot(pred_ee[:, 0], pred_ee[:, 1], pred_ee[:, 2], 'r--', lw=2, label='Predicted')
@@ -165,9 +168,15 @@ def plot_multi_model_trajectories(model_predictions, gt_ang, model_names, title=
     print("="*50)
 
 
+import time
+
 def test(checkpoint, data_dir='datasets/baxter', seq_len=50, num_seq=5, device='cpu'):
+    """Test a single model and visualize predictions."""
     model, _ = load_model(checkpoint, device)
     _, _, test_loader, _, _ = create_dataloaders(data_dir, batch_size=8, seq_len=seq_len, stride=seq_len, seed=42)
+    
+    total_time = 0
+    total_steps = 0
     
     for i, (init, torques, targets) in enumerate(test_loader):
         if i >= num_seq:
@@ -176,8 +185,18 @@ def test(checkpoint, data_dir='datasets/baxter', seq_len=50, num_seq=5, device='
         init_d = init[0:1].to(device)
         torq_d = torques[0:1].to(device)
         
+        # Warmup
+        if i == 0:
+            with torch.no_grad():
+                _ = model(init_d, torq_d)
+        
+        start_time = time.perf_counter()
         with torch.no_grad():
             pred = model(init_d, torq_d)[0].cpu().numpy()
+        end_time = time.perf_counter()
+        
+        total_time += (end_time - start_time)
+        total_steps += seq_len
         
         # States are already in physical units (no denormalization needed)
         init_np = init[0].numpy()
@@ -188,6 +207,9 @@ def test(checkpoint, data_dir='datasets/baxter', seq_len=50, num_seq=5, device='
         gt_full = np.vstack([init_np[None], target_np])
         
         plot_ee_trajectories(pred_full[:, :7], gt_full[:, :7], title=f'Sequence {i}')
+        
+    avg_time_per_step = (total_time / total_steps) * 1000 if total_steps > 0 else 0
+    print(f"\nInference Speed: {avg_time_per_step:.4f} ms/step (Total: {total_time:.4f}s for {total_steps} steps)")
 
 
 def compare_models(checkpoints, model_names=None, data_dir='datasets/baxter', 
@@ -232,6 +254,10 @@ def compare_models(checkpoints, model_names=None, data_dir='datasets/baxter',
     # Load data (use test split - unseen during training/validation)
     _, _, test_loader, _, _ = create_dataloaders(data_dir, batch_size=8, seq_len=seq_len, stride=seq_len, seed=42)
     
+    # Timing stats
+    model_times = {name: 0.0 for name in model_names}
+    total_steps = 0
+    
     for i, (init, torques, targets) in enumerate(test_loader):
         if i >= num_seq:
             break
@@ -241,14 +267,27 @@ def compare_models(checkpoints, model_names=None, data_dir='datasets/baxter',
         init_np = init[0].numpy()
         target_np = targets[0].numpy()
         
+        # Warmup on first iteration
+        if i == 0:
+            for model in models:
+                with torch.no_grad():
+                    _ = model(init_d, torq_d)
+        
         # Get predictions from all models
         predictions = []
-        for model in models:
+        for model, name in zip(models, model_names):
+            start_time = time.perf_counter()
             with torch.no_grad():
                 pred = model(init_d, torq_d)[0].cpu().numpy()
+            end_time = time.perf_counter()
+            
+            model_times[name] += (end_time - start_time)
+            
             # Full trajectory including initial state
             pred_full = np.vstack([init_np[None], pred])
             predictions.append(pred_full[:, :7])  # Only angles
+            
+        total_steps += seq_len
         
         # Ground truth full trajectory
         gt_full = np.vstack([init_np[None], target_np])
@@ -262,13 +301,25 @@ def compare_models(checkpoints, model_names=None, data_dir='datasets/baxter',
             title=f'Model Comparison - Sequence {i}',
             save_path=save_path
         )
+        
+    # Print timing summary
+    print("\n" + "="*60)
+    print("Inference Speed Comparison")
+    print("="*60)
+    print(f"{'Model':<25} {'Time/Step (ms)':>15} {'Total (s)':>15}")
+    print("-"*60)
+    for name in model_names:
+        avg_ms = (model_times[name] / total_steps) * 1000 if total_steps > 0 else 0
+        print(f"{name:<25} {avg_ms:>15.4f} {model_times[name]:>15.4f}")
+    print("="*60)
+
 
 
 def main():
     parser = argparse.ArgumentParser(description='Test Neural ODE models on EE trajectory prediction')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
     
-    # Single model test
+    # Single model test arguments
     single_parser = subparsers.add_parser('single', help='Test a single model')
     single_parser.add_argument('--checkpoint', required=True, help='Path to model checkpoint')
     single_parser.add_argument('--data_dir', default='datasets/baxter')
@@ -276,7 +327,7 @@ def main():
     single_parser.add_argument('--num_sequences', type=int, default=5)
     single_parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     
-    # Multi-model comparison
+    # Multi-model comparison arguments
     compare_parser = subparsers.add_parser('compare', help='Compare multiple models')
     compare_parser.add_argument('--checkpoints', nargs='+', required=True, 
                                 help='Paths to model checkpoints (space-separated)')
@@ -296,14 +347,7 @@ def main():
         compare_models(args.checkpoints, args.names, args.data_dir, 
                        args.seq_len, args.num_sequences, args.device, args.save_dir)
     else:
-        # Default behavior: if --checkpoint is provided directly (backward compatibility)
-        parser.add_argument('--checkpoint', required=True)
-        parser.add_argument('--data_dir', default='datasets/baxter')
-        parser.add_argument('--seq_len', type=int, default=50)
-        parser.add_argument('--num_sequences', type=int, default=5)
-        parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
-        args = parser.parse_args()
-        test(args.checkpoint, args.data_dir, args.seq_len, args.num_sequences, args.device)
+        raise ValueError("Please specify a command: 'single' or 'compare'")
 
 
 if __name__ == '__main__':
