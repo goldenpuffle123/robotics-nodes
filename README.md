@@ -11,6 +11,13 @@ Learning robot dynamics using Neural ODE models trained on Baxter arm end-effect
 
 ### Installation
 
+#### Git LFS
+- Go to [Git LFS](https://git-lfs.com/) and follow installation instructions for your OS
+```
+# Setup Git LFS
+git lfs install
+```
+#### Clone Repository
 ```bash
 # Clone repository
 git clone https://github.com/goldenpuffle123/robotics-nodes.git
@@ -46,16 +53,8 @@ uv sync
 uv add torch
 
 # 2. without uv
-pip install -e
-# skip this step if torch with CUDA is already installed
+pip install -r requirements.txt
 pip install torch
-```
-#### Git LFS
-- Go to [Git LFS](https://git-lfs.com/) and follow installation instructions for your OS
-```
-# Setup Git LFS
-git lfs install
-git lfs pull
 ```
 
 ### Generating Results from Paper

@@ -11,3 +11,7 @@ dependencies = [
     "torchdiffeq>=0.2.5",
     "tqdm>=4.67.1",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["modelv3*", "datasets*", "models_trained*"]
