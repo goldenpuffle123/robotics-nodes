@@ -1,0 +1,10 @@
+{
+  "hidden_dim": 128,
+  "dt": 0.002,
+  "seq_len": 500,
+  "batch_size": 128,
+  "lr": 0.001,
+  "weight_decay": 0.0001,
+  "epochs": 50,
+  "integrator": "euler"
+}

@@ -202,7 +202,6 @@ class NeuralODE(nn.Module):
         
         # Set batched interpolator
         self.ode_func.set_interpolator(TorqueInterpolatorConstant(torques, self.dt))
-        
         # Batched integration: returns [seq_len+1, batch, state_dim]
         try:
             if self.integrator == 'vv': # Custom function shown above

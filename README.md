@@ -28,7 +28,7 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-#### Train with GPU Acceleration (Optional)
+#### GPU Acceleration (Optional)
 - If you have a compatible NVIDIA GPU, ensure CUDA is installed
 - Go to `cmd/powershell` and run `nvcc --version` to check CUDA version
 - Go to [PyTorch](https://pytorch.org/get-started/locally/) and follow instructions to install PyTorch with CUDA support (note: replace `pip3` with `uv pip` for uv)
@@ -58,6 +58,10 @@ git lfs install
 git lfs pull
 ```
 
+### Generating Results from Paper
+
+See `COMMANDS.md` for commands to reproduce figures from the paper, including training, testing, and model comparisons.
+
 ### Dataset
 
 The dataset contains 24 CSV files with Baxter left-arm trajectories:
@@ -83,9 +87,12 @@ python train.py \
     --epochs 200 \
     --batch_size 64 \
     --seq_len 50 \
+    --stride 10 \
     --lr 1e-3 \
     --hidden_dim 128 \
-    --output_dir checkpoints/modelv3_v2
+    --dt 0.002 \
+    --integrator euler \
+    --output_dir checkpoints/modelv3
 
 # Resume from checkpoint
 python train.py --resume checkpoints/modelv3/best_model.pt --epochs 100
@@ -95,8 +102,11 @@ python train.py --resume checkpoints/modelv3/best_model.pt --epochs 100
 - `--epochs`: Number of training epochs (default: 100)
 - `--batch_size`: Batch size (default: 32)
 - `--seq_len`: Sequence length in timesteps (default: 50)
+- `--stride`: Stride for sampling sequences (default: 10)
 - `--lr`: Learning rate (default: 1e-3)
 - `--hidden_dim`: Hidden layer dimension (default: 128)
+- `--dt`: Timestep size (default: 0.002)
+- `--integrator`: ODE solver method - `euler`, `rk4`, `dopri5`, or `vv` (default: euler)
 - `--output_dir`: Checkpoint directory (default: checkpoints/modelv3)
 - `--resume`: Resume from checkpoint (optional)
 - `--device`: cuda/mps/cpu (default: auto-detect)
@@ -107,24 +117,16 @@ python train.py --resume checkpoints/modelv3/best_model.pt --epochs 100
 - `history.json` - Training/validation metrics
 - `checkpoint_*.pt` - Periodic checkpoints
 
-### Monitor Training
-
-Training logs are printed to console with loss values. Training takes ~10 minutes on GPU for 10 epochs.
-
 ## Pretrained Models
 
-Pretrained models (from project) are available in `checkpoints/modelv3/`:
-- Interpolation tests:
-    - `interp_constant.pt`: Neural ODE with piecewise-constant torque interpolation
+Pretrained models (from project) are available in `models_trained/`:
+- Interpolators:
+    - `interp_constant.pt`: Piecewise-constant torque interpolation
     - `interp_linear.pt`: Linear torque interpolation
-- Integrator tests:
-    - `euler.pt`: Euler method
-    - `rk4.pt`: Runge-Kutta 4th order
-    - `velocity_verlet.pt`: Velocity Verlet integrator
-- Prediction frame tests:
-    - `frame_100.pt`: trained on 100 frames = 0.2 sec of data
-    - `frame_500.pt`: 500 frames = 1.0 sec
-    - `frame_1000.pt`: 1000 frames = 2.0 sec of data
+- Integrators:
+    - `vv_long.pt`: Velocity Verlet integrator
+    - `rk4_long.pt`: Runge-Kutta 4th order integrator
+    - `euler_long.pt`: Euler integrator
 
 ## Testing & Evaluation
 
@@ -152,16 +154,19 @@ python test.py compare \
     --save_dir results/comparison
 ```
 
-**Options:**
+**Single Model Options:**
+- `--checkpoint`: Path to model checkpoint (required)
 - `--seq_len`: Sequence length (default: 50)
 - `--num_sequences`: Number of sequences to visualize (default: 5)
-- `--save_dir`: Save figures to directory (optional)
-- `--device`: cuda/mps/cpu (default: auto-detect)
+- `--device`: cuda/cpu (default: auto-detect)
 
-**Outputs:**
-- 3D trajectory plots comparing predictions
-- Position error vs time graphs
-- Error summary table (mean/max error in mm)
+**Compare Models Options:**
+- `--checkpoints`: Paths to model checkpoints (required, space-separated)
+- `--names`: Names for each model (optional, space-separated)
+- `--seq_len`: Sequence length (default: 50)
+- `--num_sequences`: Number of sequences to visualize (default: 5)
+- `--save_dir`: Directory to save figures (optional)
+- `--device`: cuda/cpu (default: auto-detect)
 
 ## Model Architecture
 
@@ -171,21 +176,17 @@ python test.py compare \
 - `TorqueInterpolatorLinear`: Differentiable linear torque interpolation between timesteps
 - `TorqueInterpolatorConstant`: Piecewise-constant (zero-order hold) interpolation
 - `ODEFunc`: Neural network predicting 7-DOF accelerations given state + torques
-- `NeuralODE`: Main model using Velocity Verlet integrator for stable integration
-- ODE Solver:
-```python
-# For euler:
-states = odeint(self.ode_func, initial_state, t_span, method='euler')
-# For rk4:
-states = odeint_adjoint(self.ode_func, initial_state, t_span, method='rk4')
-# For velocity_verlet:
-states = velocity_verlet(self.ode_func, initial_state, t_span)
-```
+- `NeuralODE`: Main model supporting multiple ODE solvers
+
+**Supported Integrators:**
+- `euler`: Explicit Euler method
+- `rk4`: Runge-Kutta 4th order
+- `dopri5`: Dormand-Prince 5th order (adaptive)
+- `vv`: Velocity Verlet (symplectic, energy-conserving)
 
 **Key Design:**
 - **Input**: Initial state [batch, 14] (7 angles + 7 velocities) + torques [batch, seq_len, 7]
 - **Output**: Predicted states [batch, seq_len, 14]
-- **Integration**: Symplectic Velocity Verlet (2x faster than RK4, energy-conserving)
 - **Physics Constraint**: `dq/dt = v` enforced in ODE structure
 - **State Format**: Raw physical units (no normalization), only torques normalized
 
@@ -207,7 +208,7 @@ states = velocity_verlet(self.ode_func, initial_state, t_span)
 
 ## Utilities
 
-### Forward Kinematics
+### Forward Kinematics (`modelv3/fk.py`)
 ```bash
 cd vis
 python -c "from fk import calculate_fk; import numpy as np; q = np.zeros(7); T = calculate_fk(q); print(T)"

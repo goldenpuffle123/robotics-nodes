@@ -15,15 +15,16 @@ from fk import calculate_fk
 
 
 
-def load_model(path, device='cpu'): # Load model from config in checkpoint
+def load_model(path, device='cpu'):
+    """Load model from the configuration in checkpoint."""
     ckpt = torch.load(path, map_location=device, weights_only=False)
     config = ckpt.get('config', {})
     
-    model = NeuralODE(
+    model = NeuralODE( # Initialize model
         dof=7,
         hidden_dim=config.get('hidden_dim', 128),
         dt=config.get('dt', 0.002),
-        integrator=config.get('integrator', 'euler'),
+        integrator=config.get('integrator'), # Extracts integrator type
     )
     model.load_state_dict(ckpt['model_state_dict'])
     model.to(device)
@@ -34,7 +35,7 @@ def load_model(path, device='cpu'): # Load model from config in checkpoint
 
 def angles_to_ee(angles):
     """Convert joint angles to end effector positions."""
-    return np.array([calculate_fk(a)[:3, 3] for a in angles])
+    return np.array([calculate_fk(a)[:3, 3] for a in angles]) # Calculate transformation matrix and extract position
 
 
 def plot_ee_trajectories(pred_ang, gt_ang, title="EE Trajectory", save_path=None):
@@ -116,39 +117,21 @@ def plot_multi_model_trajectories(model_predictions, gt_ang, model_names, title=
     ax1.set_xlabel('X'); ax1.set_ylabel('Y'); ax1.set_zlabel('Z')
     ax1.legend(fontsize=7, loc='upper left')
     ax1.set_title('3D Trajectory')
-    
-    # XYZ over time (show only one axis at a time for clarity, or all GT + one model)
-    t = np.arange(len(gt_ee))
-    """ ax2 = fig.add_subplot(132)
-    
-    # Plot GT components
-    for j, (c, label) in enumerate(zip(['b', 'g', 'r'], ['X', 'Y', 'Z'])):
-        ax2.plot(t, gt_ee[:, j], f'{c}-', lw=2, label=f'GT {label}')
-    
-    # Plot each model's components with dashed lines
-    for i, (pred_ee, name, color) in enumerate(zip(pred_ees, model_names, colors)):
-        for j, label in enumerate(['X', 'Y', 'Z']):
-            linestyle = ['--', '-.', ':'][j]
-            ax2.plot(t, pred_ee[:, j], linestyle=linestyle, color=color, lw=1, 
-                     label=f'{name} {label}' if j == 0 else None, alpha=0.7)
-    
-    ax2.set_xlabel('Timestep'); ax2.set_ylabel('Position (m)')
-    ax2.legend(fontsize=6, ncol=2); ax2.grid(True, alpha=0.3)
-    ax2.set_title('Position Components') """
-    
+
     # Error comparison
-    ax3 = fig.add_subplot(122)
+    t = np.arange(len(gt_ee))
+    ax2 = fig.add_subplot(122)
     
     error_stats = []
     for i, (pred_ee, name, color) in enumerate(zip(pred_ees, model_names, colors)):
         err = np.linalg.norm(pred_ee - gt_ee, axis=1) * 1000  # mm
-        ax3.plot(t, err, '-', color=color, lw=1.5, label=f'{name} (mean: {err.mean():.1f}mm)')
+        ax2.plot(t, err, '-', color=color, lw=1.5, label=f'{name} (mean: {err.mean():.1f}mm)')
         error_stats.append((name, err.mean(), err.max()))
     
-    ax3.set_xlabel('Timestep'); ax3.set_ylabel('Error (mm)')
-    ax3.legend(fontsize=7)
-    ax3.grid(True, alpha=0.3)
-    ax3.set_title('Position Error Comparison')
+    ax2.set_xlabel('Timestep'); ax2.set_ylabel('Error (mm)')
+    ax2.legend(fontsize=7)
+    ax2.grid(True, alpha=0.3)
+    ax2.set_title('Position Error Comparison')
     
     plt.suptitle(title, fontweight='bold')
     plt.tight_layout()
@@ -185,15 +168,16 @@ def test(checkpoint, data_dir='datasets/baxter', seq_len=50, num_seq=5, device='
         init_d = init[0:1].to(device)
         torq_d = torques[0:1].to(device)
         
-        # Warmup
+        # Warmup iterations
         if i == 0:
-            with torch.no_grad():
-                _ = model(init_d, torq_d)
+            for _ in range(10):
+                with torch.no_grad():
+                    _ = model(init_d, torq_d)
         
-        start_time = time.perf_counter()
+        start_time = time.perf_counter() # Start timing
         with torch.no_grad():
             pred = model(init_d, torq_d)[0].cpu().numpy()
-        end_time = time.perf_counter()
+        end_time = time.perf_counter() # End timing
         
         total_time += (end_time - start_time)
         total_steps += seq_len
@@ -232,7 +216,7 @@ def compare_models(checkpoints, model_names=None, data_dir='datasets/baxter',
         model, _ = load_model(ckpt_path, device)
         models.append(model)
     
-    # Generate model names if not provided
+    # Simple algorithm to generate model names if not provided
     if model_names is None:
         model_names = []
         for p in checkpoints:
@@ -251,7 +235,7 @@ def compare_models(checkpoints, model_names=None, data_dir='datasets/baxter',
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
     
-    # Load data (use test split - unseen during training/validation)
+    # Load data (use test split; unseen during training/validation)
     _, _, test_loader, _, _ = create_dataloaders(data_dir, batch_size=8, seq_len=seq_len, stride=seq_len, seed=42)
     
     # Timing stats
