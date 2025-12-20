@@ -4,6 +4,9 @@ Learning robot dynamics using Neural ODE models trained on Baxter arm end-effect
 
 ## Quick Start
 
+### Demo Video:
+https://drive.google.com/file/d/1PkbBpfY2uqX7I86Z1kTtsSEnHsJAeBlD/view?usp=sharing
+
 ### Prerequisites
 - Python 3.10+
 - CUDA 11.8+ (for GPU acceleration, optional)
